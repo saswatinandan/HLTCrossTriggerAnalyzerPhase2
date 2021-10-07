@@ -1,0 +1,11 @@
+<library file="*.cc" name="HLTCrossTriggerAnalyzerPhase2HLTCrossTriggerAnalyzerPhase2Plugins">
+  <flags   EDM_PLUGIN="1"/>
+  <use   name="FWCore/ParameterSet"/>
+  <use   name="FWCore/PluginManager"/>
+  <use   name="HLTCrossTriggerAnalyzerPhase2/HLTCrossTriggerAnalyzerPhase2"/>
+  <use   name="root"/>
+  <use   name="hepmc"/>
+  <use   name="roottmva"/>
+  <use   name="boost"/>
+</library>
+

@@ -1,0 +1,25 @@
+<use   name="PhysicsTools/TensorFlow"/>
+<use   name="FWCore/ParameterSet"/>
+<use   name="FWCore/Utilities"/>
+<use   name="CommonTools/Utils"/>
+<use   name="DataFormats/Math"/>
+<use   name="FWCore/Framework"/>
+<use   name="FWCore/PluginManager"/>
+<use   name="FWCore/MessageLogger"/>
+<use   name="JetMETCorrections/Modules"/>
+<use   name="DataFormats/PatCandidates"/>
+<use   name="DataFormats/L1Trigger"/>
+<use   name="DataFormats/Phase2L1Taus"/>
+<use   name="FWCore/ServiceRegistry"/>
+<use   name="HLTrigger/HLTcore"/>
+<use   name="CommonTools/UtilAlgos"/>
+<use   name="root"/>
+<use   name="hepmc"/>
+<use   name="roottmva"/>
+<use   name="boost" />
+<use   name="Python" />
+<Flags CXXFLAGS="-O3 -fPIC -Wswitch -Wswitch-enum -Werror -Wshadow -Wno-reorder -Wno-error=bool-compare" />
+<export>
+  <lib   name="1"/>
+</export>
+
