@@ -20,6 +20,7 @@
 
 #include "DataFormats/VertexReco/interface/Vertex.h"  
 #include "DataFormats/Math/interface/deltaR.h"
+#include "DataFormats/PatCandidates/interface/PackedCandidate.h"
 #include "SimDataFormats/GeneratorProducts/interface/GenEventInfoProduct.h"
 #include "SimDataFormats/PileupSummaryInfo/interface/PileupSummaryInfo.h"
 #include <DataFormats/PatCandidates/interface/Tau.h> 
@@ -77,8 +78,30 @@ namespace {
     for (auto cand: consts) taupt+= cand->pt();
     return taupt;
   }
-}
+  bool
+  check_tauproperty(const pat::Tau& recoPatTau)
+  {
+    return (recoPatTau.pt()>20 && std::fabs(recoPatTau.eta())<2.4 && (recoPatTau.tauID("decayModeFindingNewDMs") == 0 || recoPatTau.tauID("decayModeFindingNewDMs") ==1 || recoPatTau.tauID("decayModeFindingNewDMs") ==2 || recoPatTau.tauID("decayModeFindingNewDMs") ==10 || recoPatTau.tauID("decayModeFindingNewDMs") ==11));
+  }
+  /*  bool
+  check_tauproperty(const reco::PFTau& recoPatTau)
+  {
+    return (recoPatTau.pt()>20 && std::fabs(recoPatTau.eta())<2.4 && (recoPatTau.tauID("decayModeFindingNewDMs") == 0 || recoPatTau.tauID("decayModeFindingNewDMs") ==1 || recoPatTau.tauID("decayModeFindingNewDMs") ==2 || recoPatTau.tauID("decayModeFindingNewDMs") ==10 || recoPatTau.tauID("decayModeFindingNewDMs") ==11));
+    }*/
+  template<typename recpartType>
+  bool
+  do_genmatch(const reco::GenParticle& genpart, const recpartType& recopart)
+  {
+    double genpt = genpart.pt();
 
+    if ( deltaR(recopart.eta(), recopart.phi(), genpart.eta(), genpart.phi()) < 0.05 )
+    {
+      if ( fabs(recopart.pt() - genpt) / genpt < 0.50 );
+      return true;
+    }
+    return false;
+  }
+}
 class HLTTauTimeStudy : public edm::one::EDAnalyzer<edm::one::SharedResources>  {
 public:
   enum ParticleType {
@@ -105,7 +128,6 @@ private:
   virtual void analyze(const edm::Event&, const edm::EventSetup&) override;
   virtual void endJob() override;
   std::map<int, std::map<int, std::map<std::string, TH1F*> >> genMatched_histogram;
-  std::map<int, TH1F*> cutflow;
   TProfile2D* hprofile;
   TH1F* h_analyzed;
   TH1F* h_vertex;
@@ -115,7 +137,9 @@ private:
   TH1F* h_pt_wtime;
   TH1F* h_eta_wotime;
   TH1F* h_pt_wotime;
-  TH1F* h_avgtime;
+  TH1F* h_genmatchedavgtime;
+  TH1F* h_vertexmatchedavgtime;
+  TH2F* h_avgtime;
   TH1F* h_deno;
   TH1F* h_neo;
   TH1F* h_taupt;
@@ -160,8 +184,10 @@ private:
   edm::EDGetTokenT<std::vector<reco::PFJet>> recoJetToken_;
   edm::EDGetTokenT<std::vector<SimVertex>> genvertexToken_;
   edm::EDGetTokenT<std::vector<PileupSummaryInfo>> puSummaryToken_;
+  edm::EDGetTokenT<std::vector<reco::PFTau>> recoPFTauToken_;
+  edm::EDGetTokenT<reco::PFTauDiscriminator> pfTauDiscrimination_byDecayModeToken_;
 };
-
+  
 HLTTauTimeStudy::HLTTauTimeStudy(const edm::ParameterSet& iConfig)
   : debug_          (iConfig.getUntrackedParameter<bool>("debug", false))
   , usegenJets_ (iConfig.getParameter<bool>("usegenJets"))
@@ -172,6 +198,8 @@ HLTTauTimeStudy::HLTTauTimeStudy(const edm::ParameterSet& iConfig)
   , recoJetToken_ (consumes<vector<reco::PFJet>>    (iConfig.getParameter<edm::InputTag>("genJetToken")))
   , genvertexToken_ (consumes<vector<SimVertex>>    (iConfig.getParameter<edm::InputTag>("genvertexToken")))
   , puSummaryToken_ (consumes<vector<PileupSummaryInfo>>    (iConfig.getParameter<edm::InputTag>("puSummaryToken")))
+  , recoPFTauToken_ (consumes<vector<reco::PFTau>>    (iConfig.getParameter<edm::InputTag>("recoPFTauToken")))
+  , pfTauDiscrimination_byDecayModeToken_ (consumes<reco::PFTauDiscriminator>(iConfig.getParameter<edm::InputTag>("taudecayModediscriminationToken")))
 {
   return;
 }
@@ -181,7 +209,6 @@ HLTTauTimeStudy::~HLTTauTimeStudy()
 {
   for ( int particle_id=ParticleType::X; particle_id<=ParticleType::egamma_HF; particle_id++ )
   {
-    delete cutflow[particle_id];
     for ( int match=GenMatch::kNoGenMatch; match<=GenMatch::kGenMatch; match++)
     {
       for ( std::map<std::string, TH1F*>::const_iterator itr = genMatched_histogram[match][particle_id].begin(); itr != genMatched_histogram[match][particle_id].end(); itr++)
@@ -199,7 +226,7 @@ HLTTauTimeStudy::~HLTTauTimeStudy()
 //
 
 // ------------ method called for each event  ------------
-void
+  void
 HLTTauTimeStudy::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetup)
 {
   if(debug_){
@@ -221,34 +248,37 @@ HLTTauTimeStudy::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetup
   edm::Handle<vector<pat::Tau>>  recoPatTauHandle;
   iEvent.getByToken(recoPatTauToken_, recoPatTauHandle);
 
+  edm::Handle<vector<reco::PFTau>>  recoPFTauHandle;
+  iEvent.getByToken(recoPFTauToken_, recoPFTauHandle);
+
   edm::Handle<vector<reco::PFJet>>  recoJetHandle;
   iEvent.getByToken(recoJetToken_, recoJetHandle);
+  
+  edm::Handle<reco::PFTauDiscriminator> pfTauDiscrimination_byDecayModeHandle;
+  iEvent.getByToken(pfTauDiscrimination_byDecayModeToken_, pfTauDiscrimination_byDecayModeHandle);
 
   //  edm::Handle<vector<double>>  rhoHandle_;
   //iEvent.getByToken(recoJetToken_, rhoHandle);
 
-  reco::GenParticle tau1gen, tau2gen;
+  reco::GenParticle tau1gen, tau2gen, maxptgen;
   int ntau(0);
+  float maxpt(0);
   for(auto genpart : *recogenPartCandHandle)
   {
-    if(genpart.pdgId()==15)
+    if( genpart.status() == 1 && genpart.pt() > maxpt)
     {
-      ntau +=1;
-      tau1gen = const_cast<reco::GenParticle&>(genpart);
+      maxpt = genpart.pt();
+      maxptgen = const_cast<reco::GenParticle&>(genpart);
     }
-    else if(genpart.pdgId()==-15)
-    {
-      ntau +=1;
-      tau2gen = const_cast<reco::GenParticle&>(genpart);
-    }
-    if (ntau==2) break;
   }
-  std::cout << "new event" << std::endl;
+  //  std::cout << "pt= " << maxptgen.pt() << std::endl;
+  math::XYZPoint vertex = maxptgen.vertex();
 
-  int time_count(0);
-  double sum_time(0);
+  int genmatched_time_count(0), vertexmatched_time_count(0);
+  double genmatched_sum_time(0), vertexmatched_sum_time(0);
+  int nrecoPFTau(recoPFTauHandle->size());
 
-  if (0) 
+  /*if (0) 
   {
     if ( !usegenJets_ )
     {
@@ -385,10 +415,10 @@ HLTTauTimeStudy::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetup
                if(recoPatTau.pt() >20 && std::fabs(recoPatTau.eta()) <2.3 && recoPatTau.tauID("chargedIsoPtSumdR03")/recoPatTau.pt() <0.20 && (recoPatTau.tauID("decayModeFindingNewDMs") ==  0 || recoPatTau.tauID("decayModeFindingNewDMs") == 1 || recoPatTau.tauID("decayModeFindingNewDMs") == 2 || recoPatTau.tauID("decayModeFindingNewDMs") == 10 || recoPatTau.tauID("decayModeFindingNewDMs") == 11)) fillWOverflow(h_taudecay, recoJet.pt());
                break;
                //        matchedjets1.push_back(matchedtau);
-               }*/
+               ############}
       }
     }
-  }
+  }*/
 
   for(const auto recoPFCand : *recpPFCandHandle) 
   {
@@ -397,23 +427,12 @@ HLTTauTimeStudy::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetup
     double recpt = recoPFCand.pt();
     double receta = recoPFCand.eta();
     int recparticleid = recoPFCand.particleId();
-    int pass(0);
-    bool rectogenmatch(false);
+
     for(const auto recoGenCand : *recogenPartCandHandle)
     {
-      
-      double genpt = recoGenCand.pt();
-
-      if ( ! (deltaR(receta, recoPFCand.phi(), recoGenCand.eta(), recoGenCand.phi()) < 0.05) ) continue;
-      pass = 1;
-      if ( ! (fabs(recpt - genpt) / genpt < 0.50) ) continue;
-      pass =2;
-      genmatched = 1;
-      
+      genmatched = do_genmatch<reco::PFCandidate>(recoGenCand, recoPFCand);
+      if (genmatched) break;
     }
-    cutflow[recparticleid]->Fill(0);
-    if ( pass >=1 ) cutflow[recparticleid]->Fill(1);
-    if ( pass >=2 ) cutflow[recparticleid]->Fill(2);
     double time = recoPFCand.time();
     bool hastimeinfo = recoPFCand.isTimeValid();
     if ( hastimeinfo )
@@ -444,20 +463,20 @@ HLTTauTimeStudy::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetup
         {
           fillWOverflow(genMatched_histogram[match][particle_id]["time_distribution"], time);
           fillWOverflow(genMatched_histogram[match][particle_id]["pt_distribution"], recpt);
-          if(0)
+          if ( recparticleid == ParticleType::h && recpt > 2 && abs(receta) < 2.4 )
           {
-            if ( recparticleid == ParticleType::h && recpt > 2 && abs(receta) < 2.4 && genmatched )
+            if ( genmatched )
             {
-              time_count += 1;
-              sum_time += time;
+              genmatched_time_count += 1;
+              genmatched_sum_time += time;
             }
-          }
-          else
-          {
-            if ( recparticleid == ParticleType::h && recpt > 2 && abs(receta) < 2.4 )
+            math::XYZPoint recvertex = recoPFCand.vertex();
+            math::XYZPoint diff(recvertex.x() - vertex.x(), recvertex.y() - vertex.y(), recvertex.z() - vertex.z());
+            float dxy = TMath::Sqrt(square(diff.x()) + square(diff.y()));
+            if ( (fabs( diff.z() - diff.z() ) < 0.1) )
             {
-              time_count += recpt;
-              sum_time += (recpt * time);
+              vertexmatched_time_count += recpt;
+              vertexmatched_sum_time += (recpt * time);
             }
           }
         }
@@ -465,24 +484,20 @@ HLTTauTimeStudy::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetup
       }
     }
   }
-  float avgtime = ( time_count ) ? sum_time / time_count : -100;
-  if ( avgtime > -100 ) fillWOverflow(h_avgtime, avgtime );
+  float genmatched_avgtime = ( genmatched_time_count ) ? genmatched_sum_time / genmatched_time_count : -100;
+  if ( genmatched_avgtime > -100 ) fillWOverflow(h_genmatchedavgtime, genmatched_avgtime );
+  float vertexmatched_avgtime = ( vertexmatched_time_count ) ? vertexmatched_sum_time / vertexmatched_time_count : -100;
+  if ( vertexmatched_avgtime > -100 ) fillWOverflow(h_vertexmatchedavgtime, vertexmatched_avgtime );
+  h_avgtime->Fill(genmatched_avgtime, vertexmatched_avgtime);
   for(const auto recoPFCand : *recpPFCandHandle)
   {
     
     bool genmatched(0);
-    double recpt = recoPFCand.pt();
-    double receta = recoPFCand.eta();
-    
+
     for(const auto recoGenCand : *recogenPartCandHandle)
     {
-      
-      double genpt = recoGenCand.pt();
-      if ( ! (deltaR(receta, recoPFCand.phi(), recoGenCand.eta(), recoGenCand.phi()) < 0.05) ) continue;
-      if ( ! (fabs(recpt - genpt) / genpt < 0.50) ) continue;
-      genmatched = 1;
-      break;
-      
+      genmatched = do_genmatch<reco::PFCandidate>(recoGenCand, recoPFCand);
+      if (genmatched) break;
     }
     int recparticleid = recoPFCand.particleId();
     for ( int match=GenMatch::kNoGenMatch; match<=GenMatch::kGenMatch; match++)
@@ -494,17 +509,50 @@ HLTTauTimeStudy::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetup
         if ( recparticleid != particle_id ) continue;
         if ( recoPFCand.isTimeValid() )
         {
-          if ( avgtime > -100 )
+          if ( genmatched_avgtime > -100 )
           {
             if ( recoPFCand.pt() > 2 && abs(recoPFCand.eta()) < 2.4 && genmatched )
-              hprofile->Fill(recoPFCand.eta(), recoPFCand.phi(), recoPFCand.time() - avgtime);
-            fillWOverflow(genMatched_histogram[match][particle_id]["time_shift"], recoPFCand.time() - avgtime );
-            if ( time_count >=3 && genmatched ) fillWOverflow(genMatched_histogram[match][particle_id]["time_shift_with5"], recoPFCand.time() - avgtime );
+              hprofile->Fill(recoPFCand.eta(), recoPFCand.phi(), recoPFCand.time() - genmatched_avgtime);
+            fillWOverflow(genMatched_histogram[match][particle_id]["time_shift"], recoPFCand.time() - genmatched_avgtime );
+            if ( genmatched_time_count >=3 && genmatched ) fillWOverflow(genMatched_histogram[match][particle_id]["time_shift_with5"], recoPFCand.time() - genmatched_avgtime );
           }
         }
       }
     }
   }
+
+  for (auto tau : *recoPatTauHandle) {
+    int cand(0);
+    float leadtime(0);
+    bool leadgenmatched(0);
+    reco::CandidatePtrVector signal = tau.signalCands();
+    for (auto sig : signal){
+      if (sig->pdgId() == 22) continue;
+      bool genmatch(false);
+      for (auto genpart : *recogenPartCandHandle)
+      {
+        genmatch = do_genmatch<reco::Candidate>(genpart, *sig);
+        if (genmatch) break;
+      }
+      cand +=1;
+      auto packedCand = dynamic_cast<const pat::PackedCandidate*>(sig.get());
+      if(cand ==1) {
+        leadtime = packedCand->time();
+        leadgenmatched = genmatch;
+        fillWOverflow(genMatched_histogram[genmatch][ParticleType::h]["tauleadcandidate"], 1);
+        continue;
+      }
+      else if (cand==2) {
+        fillWOverflow(genMatched_histogram[genmatch && leadgenmatched][ParticleType::h]["time_shift_of_1stsubleadCand_wrt_lead_chargedCand"], leadtime - packedCand->time());
+        continue;
+      }
+      else if (cand==3) {
+        fillWOverflow(genMatched_histogram[genmatch && leadgenmatched][ParticleType::h]["time_shift_of_2ndsubleadCand_wrt_lead_chargedCand"], leadtime - packedCand->time());
+        break;
+      }
+    }
+  }
+        //auto taupf = dynamic_cast<reco::PFTau&>(taubase);
 }
 
 void
@@ -610,34 +658,36 @@ HLTTauTimeStudy::beginJob()
       name = Form("%s_pt_distribution", prefix.data());
       genMatched_histogram[match][particle_id]["pt_distribution"] = dir.make<TH1F>(name.data(), name.data(), 100, 0, 20);
       name = Form("%s_time_shift", prefix.data());
+      genMatched_histogram[match][particle_id]["time_shift"] = dir.make<TH1F>(name.data(), name.data(), 200, -0.5, 0.5);
       if ( match==GenMatch::kGenMatch )
       {
-        //  genMatched_histogram[match][particle_id]["time_shift"] = dir.make<TH1F>(name.data(), name.data(), 202, a);
         genMatched_histogram[match][particle_id]["time_shift_with5"] = dir.make<TH1F>((name+"_with5").data(), (name+"_with5").data(), 200, -0.5, 0.5);
       }
-      /*else
-        {*/
-        genMatched_histogram[match][particle_id]["time_shift"] = dir.make<TH1F>(name.data(), name.data(), 200, -0.5, 0.5);
-        //}
+      if ( particle_id == ParticleType::h )
+      {
+        name = Form("%s_leadcandidate", prefix.data());
+        genMatched_histogram[match][particle_id]["tauleadcandidate"] = dir.make<TH1F>(name.data(), name.data(), 1, 0.5, 1.5);
+        name = Form("%s_time_shift_of_1stsubleadCand_wrt_lead_chargedCand", prefix.data());
+        genMatched_histogram[match][particle_id]["time_shift_of_1stsubleadCand_wrt_lead_chargedCand"] = dir.make<TH1F>(name.data(), name.data(), 200, -0.5, 0.5);
+        name = Form("%s_time_shift_of_2ndsubleadCand_wrt_lead_chargedCand", prefix.data());
+        genMatched_histogram[match][particle_id]["time_shift_of_2ndsubleadCand_wrt_lead_chargedCand"] = dir.make<TH1F>(name.data(), name.data(), 200, -0.5, 0.5);
+      }
       name = Form("%s_time_info", prefix.data());
       genMatched_histogram[match][particle_id]["time_info"] = dir.make<TH1F>(name.data(), name.data(), 2, -0.5, 1.5);
-      if ( cutflow.count(particle_id) == 0 )
-      {
-        cutflow[particle_id] = dir.make<TH1F>("cutflow", "cutflow", 3, 0, 3);
-        cutflow[particle_id]->GetXaxis()->SetBinLabel(1, "no cut");
-        cutflow[particle_id]->GetXaxis()->SetBinLabel(2, "dr cut");
-        cutflow[particle_id]->GetXaxis()->SetBinLabel(3, "pt cut");
-      }
     }
   }
   delete [] a;
   gdir[-1] = fs->mkdir("inclusive");
   TFileDirectory dir = gdir[-1];
   h_genmatched_timeinfo = dir.make<TH1F>("genmatched_timeinfo", "timeinfo", 2, -0.5, 1.5);
-  h_avgtime = new TH1F("avg_time", "average time of event", 200, -0.5, 0.5);
+  h_genmatchedavgtime = new TH1F("genmatchedavg_time", "average time of event from gen matching", 200, -0.5, 0.5);
+  h_vertexmatchedavgtime = new TH1F("vertexmatchedavg_time", "average time of event from vertex matching", 200, -0.5, 0.5);
+  h_avgtime = new TH2F("avg_time", "average time of event", 200, -0.5, 0.5, 200, -0.5, 0.5);
+  h_avgtime->Sumw2();
   hprofile = new TProfile2D("profile", "time vs eta and phi", 12, -2.4, 2.4, 9, -3.14, 3.14);
   hprofile->Sumw2();
-  h_avgtime->Sumw2();
+  h_genmatchedavgtime->Sumw2();
+  h_vertexmatchedavgtime->Sumw2();
   h_nogenmatched_timeinfo = new TH1F("nogenmatched_timeinfo", "timeinfo", 2, -0.5, 1.5);
   h_eta_wtime = new TH1F("eta_wtime", "eta info with time", 50, 0., 3.);
   h_eta_wtime->Sumw2();
@@ -654,11 +704,12 @@ HLTTauTimeStudy::beginJob()
   h_genmatched_timeinfo->GetXaxis()->SetBinLabel(1, "without_timeinfo");
   h_genmatched_timeinfo->GetXaxis()->SetBinLabel(2, "with_timeinfo");
 }
-
 // ------------ method called once each job just after ending the event loop  ------------
 void
 HLTTauTimeStudy::endJob()
 {
+  h_genmatchedavgtime->Write();
+  h_vertexmatchedavgtime->Write();
   h_avgtime->Write();
   h_vertex->Write();
   hprofile->Write();
@@ -671,16 +722,15 @@ HLTTauTimeStudy::endJob()
   for ( int particle_id=ParticleType::X; particle_id<=ParticleType::egamma_HF; particle_id++ )
   {
     gdir[particle_id].cd();
-    cutflow[particle_id]->Write();
     for ( int match=GenMatch::kNoGenMatch; match<=GenMatch::kGenMatch; match++)
     {
       for ( std::map<std::string, TH1F*>::const_iterator itr = genMatched_histogram[match][particle_id].begin(); itr != genMatched_histogram[match][particle_id].end(); itr++)
       {
-      itr->second->Write();
+        itr->second->Write();
       }
     }
   }
 }
-
+  
 //define this as a plug-in
 DEFINE_FWK_MODULE(HLTTauTimeStudy);
