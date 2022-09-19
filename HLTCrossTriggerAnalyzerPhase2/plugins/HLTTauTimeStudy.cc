@@ -131,6 +131,7 @@ private:
   TProfile2D* hprofile;
   TH1F* h_analyzed;
   TH1F* h_vertex;
+  TH2F* h_tau_rec_vertex;
   TH1F* h_genmatched_timeinfo;
   TH1F* h_nogenmatched_timeinfo;
   TH1F* h_eta_wtime;
@@ -263,6 +264,8 @@ HLTTauTimeStudy::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetup
   reco::GenParticle tau1gen, tau2gen, maxptgen;
   int ntau(0);
   float maxpt(0);
+  math::XYZPoint tauvertex(0,0,0);
+  bool taufound(false);
   for(auto genpart : *recogenPartCandHandle)
   {
     if( genpart.status() == 1 && genpart.pt() > maxpt && genpart.charge() !=0)
@@ -270,8 +273,14 @@ HLTTauTimeStudy::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetup
       maxpt = genpart.pt();
       maxptgen = const_cast<reco::GenParticle&>(genpart);
     }
+    if (fabs(genpart.pdgId()) ==15 && !taufound)
+    {
+      taufound = true;
+      tauvertex = genpart.vertex();
+    }
   }
   math::XYZPoint vertex = maxptgen.vertex();
+  h_tau_rec_vertex->Fill(tauvertex.z(), vertex.z());
   //  std::cout << "pt= " << maxptgen.pt() << "\t" << maxptgen.vertex().nTracks() << std::endl;
 
   int genmatched_time_count(0), vertexmatched_time_count(0);
@@ -516,6 +525,13 @@ HLTTauTimeStudy::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetup
             fillWOverflow(genMatched_histogram[match][particle_id]["time_shift"], recoPFCand.time() - genmatched_avgtime );
             if ( genmatched_time_count >=3 && genmatched ) fillWOverflow(genMatched_histogram[match][particle_id]["time_shift_with5"], recoPFCand.time() - genmatched_avgtime );
           }
+          if ( vertexmatched_avgtime > -100 )
+          {
+            math::XYZPoint diff(recoPFCand.vertex().x() - vertex.x(), recoPFCand.vertex().y() - vertex.y(), recoPFCand.vertex().z() - vertex.z());
+            bool dxy = TMath::Sqrt(square(diff.x()) + square(diff.y())) < 0.05;
+            bool dz = fabs(diff.z()) < 0.1;
+            fillWOverflow(genMatched_histogram[dz][particle_id]["time_shift_vertexmatched"], recoPFCand.time() - vertexmatched_avgtime );
+          }
         }
       }
     }
@@ -546,22 +562,28 @@ HLTTauTimeStudy::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetup
       }
       cand +=1;
       auto packedCand = dynamic_cast<const pat::PackedCandidate*>(sig.get());
+      math::XYZPoint diff(packedCand->vertex().x() - vertex.x(), packedCand->vertex().y() - vertex.y(), packedCand->vertex().z() - vertex.z());
+      bool dxy = TMath::Sqrt(square(diff.x()) + square(diff.y())) < 0.05;
+      bool dz = fabs(diff.z()) < 0.1;
       //std::cout << "time " << packedCand->time() << "\t" << packedCand->vertexRef()->t() << "\t" << packedCand->vertexRef()->position().x() << "\t" << packedCand->vertexRef()->position().y() << "\t" << packedCand->vertexRef()->position().z() << "\t" << packedCand->vertexRef()->nTracks() << "\t" << genmatch << std::endl;
       if(cand ==1) {
         leadtime = packedCand->time();
         leadgenmatched = genmatch;
         fillWOverflow(genMatched_histogram[genmatch][ParticleType::h]["tauleadcandidate"], 1);
         fillWOverflow(genMatched_histogram[genmatch][ParticleType::h]["time_shift_leadcandidate"], leadtime-genmatched_avgtime);
+        fillWOverflow(genMatched_histogram[dz][ParticleType::h]["time_shift_leadcandidate_vertexmatched"], leadtime-vertexmatched_avgtime);
         continue;
       }
       else if (cand==2) {
         fillWOverflow(genMatched_histogram[genmatch && leadgenmatched][ParticleType::h]["time_shift_of_1stsubleadCand_wrt_lead_chargedCand"], leadtime - packedCand->time());
         fillWOverflow(genMatched_histogram[genmatch][ParticleType::h]["time_shift_subleadcandidate"], packedCand->time()-genmatched_avgtime);
+        fillWOverflow(genMatched_histogram[dz][ParticleType::h]["time_shift_subleadcandidate_vertexmatched"], packedCand->time()-vertexmatched_avgtime);
         continue;
       }
       else if (cand==3) {
         fillWOverflow(genMatched_histogram[genmatch && leadgenmatched][ParticleType::h]["time_shift_of_2ndsubleadCand_wrt_lead_chargedCand"], leadtime - packedCand->time());
         fillWOverflow(genMatched_histogram[genmatch][ParticleType::h]["time_shift_2ndsubleadcandidate"], packedCand->time()-genmatched_avgtime);
+        fillWOverflow(genMatched_histogram[dz][ParticleType::h]["time_shift_2ndsubleadcandidate_vertexmatched"], packedCand->time()-vertexmatched_avgtime);
         break;
       }
     }
@@ -678,6 +700,8 @@ HLTTauTimeStudy::beginJob()
       }
       if ( particle_id == ParticleType::h )
       {
+        name = Form("%s_time_shift_vertexmatched", prefix.data());
+        genMatched_histogram[match][particle_id]["time_shift_vertexmatched"] = dir.make<TH1F>(name.data(), name.data(), 200, -0.5, 0.5);
         name = Form("%s_leadcandidate", prefix.data());
         genMatched_histogram[match][particle_id]["tauleadcandidate"] = dir.make<TH1F>(name.data(), name.data(), 1, 0.5, 1.5);
         name = Form("%s_time_shift_of_1stsubleadCand_wrt_lead_chargedCand", prefix.data());
@@ -686,10 +710,16 @@ HLTTauTimeStudy::beginJob()
         genMatched_histogram[match][particle_id]["time_shift_of_2ndsubleadCand_wrt_lead_chargedCand"] = dir.make<TH1F>(name.data(), name.data(), 200, -0.5, 0.5);
         name = Form("%s_time_shift_leadcandidate", prefix.data());
         genMatched_histogram[match][ParticleType::h]["time_shift_leadcandidate"] = dir.make<TH1F>(name.data(), name.data(), 200, -0.5, 0.5);
+        name = Form("%s_time_shift_leadcandidate_vertexmatched", prefix.data());
+        genMatched_histogram[match][ParticleType::h]["time_shift_leadcandidate_vertexmatched"] = dir.make<TH1F>(name.data(), name.data(), 200, -0.5, 0.5);
         name = Form("%s_time_shift_1stleadcandidate", prefix.data());
         genMatched_histogram[match][ParticleType::h]["time_shift_subleadcandidate"] = dir.make<TH1F>(name.data(), name.data(), 200, -0.5, 0.5);
+        name = Form("%s_time_shift_1stleadcandidate_vertexmatched", prefix.data());
+        genMatched_histogram[match][ParticleType::h]["time_shift_subleadcandidate_vertexmatched"]= dir.make<TH1F>(name.data(), name.data(), 200, -0.5, 0.5);
         name = Form("%s_time_shift_2ndleadcandidate", prefix.data());
         genMatched_histogram[match][ParticleType::h]["time_shift_2ndsubleadcandidate"] = dir.make<TH1F>(name.data(), name.data(), 200, -0.5, 0.5);
+        name = Form("%s_time_shift_2ndleadcandidate_vertexmatched", prefix.data());
+        genMatched_histogram[match][ParticleType::h]["time_shift_2ndsubleadcandidate_vertexmatched"] = dir.make<TH1F>(name.data(), name.data(), 200, -0.5, 0.5);
       }
       name = Form("%s_time_info", prefix.data());
       genMatched_histogram[match][particle_id]["time_info"] = dir.make<TH1F>(name.data(), name.data(), 2, -0.5, 1.5);
@@ -712,6 +742,8 @@ HLTTauTimeStudy::beginJob()
   h_eta_wtime->Sumw2();
   h_vertex = new TH1F("vertex", "vertex size", 250, 0., 250.);
   h_vertex->Sumw2();
+  h_tau_rec_vertex = new TH2F("tau_rec_vertex", "gen vs rec vertex", 50, 0., 10., 50, 0., 10.);
+  h_tau_rec_vertex->Sumw2();
   h_pt_wtime = new TH1F("pt_wtime", "pt info with time", 100, 0, 50.);
   h_pt_wtime->Sumw2();
   h_eta_wotime = new TH1F("eta_wotime", "eta info w/o time", 50, 0., 3.);
@@ -738,6 +770,7 @@ HLTTauTimeStudy::endJob()
   h_pt_wotime->Write();
   h_genmatched_timeinfo->Write();
   h_nogenmatched_timeinfo->Write();
+  h_tau_rec_vertex->Write();
   for ( int particle_id=ParticleType::X; particle_id<=ParticleType::egamma_HF; particle_id++ )
   {
     gdir[particle_id].cd();
