@@ -121,9 +121,6 @@ private:
   TProfile2D* hprofile;
   TH1F* h_analyzed;
   TH1F* h_vertex;
-  TH2F* h_tau_rec_vertex;
-  TH2F* h_tau_rec_vertex_x;
-  TH2F* h_tau_rec_vertex_y;
   TH1F* h_genmatched_timeinfo;
   TH1F* h_nogenmatched_timeinfo;
   TH1F* h_eta_wtime;
@@ -133,38 +130,10 @@ private:
   TH1F* h_genmatchedavgtime;
   TH1F* h_vertexmatchedavgtime;
   TH2F* h_avgtime;
-  TH1F* h_deno;
-  TH1F* h_neo;
-  TH1F* h_taupt;
-  TH1F* h_jetpt;
-  TH1F* h_jetneutralsumpt;
-  TH1F* h_jetchargedpt;
-  TH1F* h_pdgid;
-  TH1F* h_pionpt;
-  TH1F* h_kaonpt;
-  TH1F* h_gamapt;
-  TH1F* h_elept;
-  TH1F* h_muonpt;
-  TH1F* h_jettaupt;
-  TH1F* h_jetchargedsumpt;
-  TH1F* h_tausignal;
-  TH1F* h_tauisolation;
-  TH1F * h_diff;
-  TH1F * h_diff_inclu;
-  TH1F * h_diff_high;
-  TH1F* h_tauptnocut;
-  TH1F* h_taueta;
-  TH1F* h_tauiso;
-  TH1F* h_taudecay;
-  TH1F* h_match;
-  TH1F* h_jeteta;
-  TH1F* h_iso;
-  TH1F* h_reliso;
   std::map<int, TFileDirectory> gdir;
   ULong64_t       indexevents_;
   Int_t           runNumber_;
   Int_t           lumi_;
-  double genVertex_;
   std::map<TDirectory *, std::vector<TH1 *>> gHistograms_;
 
   // ----------member data ---------------------------
@@ -488,12 +457,6 @@ HLTTauTimeStudy::beginJob()
   h_eta_wtime->Sumw2();
   h_vertex = new TH1F("vertex", "vertex size", 250, 0., 250.);
   h_vertex->Sumw2();
-  h_tau_rec_vertex = new TH2F("tau_rec_vertex", "gen vs rec vertex", 50, -10., 10., 50, -10., 10.);
-  h_tau_rec_vertex->Sumw2();
-  h_tau_rec_vertex_x = new TH2F("tau_rec_vertex_x", "gen vs rec vertex in x", 20, -0.5, 0.5, 20, -0.5,  0.5);
-  h_tau_rec_vertex_x->Sumw2();
-  h_tau_rec_vertex_y = new TH2F("tau_rec_vertex_y", "gen vs rec vertex in y", 20, -0.5, 0.5, 20, -0.5, 0.5);
-  h_tau_rec_vertex_y->Sumw2();
   h_pt_wtime = new TH1F("pt_wtime", "pt info with time", 100, 0, 50.);
   h_pt_wtime->Sumw2();
   h_eta_wotime = new TH1F("eta_wotime", "eta info w/o time", 50, 0., 3.);
@@ -520,9 +483,6 @@ HLTTauTimeStudy::endJob()
   h_pt_wotime->Write();
   h_genmatched_timeinfo->Write();
   h_nogenmatched_timeinfo->Write();
-  h_tau_rec_vertex->Write();
-  h_tau_rec_vertex_x->Write();
-  h_tau_rec_vertex_y->Write();
   for ( int particle_id=ParticleType::X; particle_id<=ParticleType::egamma_HF; particle_id++ )
   {
     gdir[particle_id].cd();
